@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BTC/USD Backtest Viewer</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#11151d; --panel2:#161b25; --border:#232a38;
+    --text:#d7dce5; --dim:#7a8494; --accent:#3b82f6;
+    --green:#26a69a; --red:#ef5350; --orange:#f0a020; --gray:#8a93a3;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:'SF Mono',Consolas,'JetBrains Mono',monospace;}
+  #app{display:flex;flex-direction:column;height:100%;}
+
+  header{padding:10px 16px;border-bottom:1px solid var(--border);
+    background:var(--panel);display:flex;align-items:center;gap:16px;flex-wrap:wrap;}
+  header h1{font-size:14px;letter-spacing:.06em;margin:0;color:var(--text);
+    font-weight:600;text-transform:uppercase;}
+  header h1 span{color:var(--accent);}
+  .stat{font-size:11px;color:var(--dim);}
+  .stat b{color:var(--text);font-weight:600;}
+  .stat.win b{color:var(--green);}
+  .stat.loss b{color:var(--red);}
+  #btn-hist{margin-left:auto;background:var(--panel2);border:1px solid var(--border);
+    color:var(--text);font-size:11px;padding:6px 14px;border-radius:4px;cursor:pointer;
+    font-weight:600;letter-spacing:.03em;}
+  #btn-hist:hover{border-color:var(--accent);color:var(--accent);}
+  #btn-hist.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+  #btn-clear{background:var(--panel2);border:1px solid var(--border);
+    color:var(--dim);font-size:11px;padding:6px 14px;border-radius:4px;cursor:pointer;
+    font-weight:600;letter-spacing:.03em;}
+  #btn-clear:hover{border-color:var(--red);color:var(--red);}
+
+  /* ── load progress bar ── */
+  #loadwrap{padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border);}
+  #loadwrap.hidden{display:none;}
+  #load-label{font-size:11.5px;color:var(--dim);display:flex;justify-content:space-between;margin-bottom:6px;}
+  #load-label b{color:var(--text);}
+  #load-track{height:6px;border-radius:3px;background:var(--panel2);overflow:hidden;}
+  #load-bar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#60a5fa);
+    transition:width .12s linear;}
+
+  #status{padding:8px 16px;font-size:12px;color:var(--dim);background:var(--panel);
+    border-bottom:1px solid var(--border);}
+  #status.err{color:var(--red);}
+  #status.hidden{display:none;}
+
+  #picker{padding:16px;background:var(--panel);border-bottom:1px solid var(--border);
+    display:none;gap:14px;align-items:center;flex-wrap:wrap;font-size:12px;}
+  #picker label{display:flex;flex-direction:column;gap:4px;color:var(--dim);}
+  #picker input[type=file]{color:var(--text);font-size:11px;max-width:260px;}
+  #picker button{background:var(--accent);color:#fff;border:none;padding:8px 16px;
+    border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;}
+  #picker button:hover{opacity:.9;}
+
+  #body{flex:1;display:flex;min-height:0;}
+  #main{flex:1;position:relative;min-height:0;}
+  #chart{position:absolute;inset:0;}
+  #overlay{position:absolute;inset:0;pointer-events:none;}
+
+  #legend{position:absolute;top:10px;left:10px;background:rgba(17,21,29,.88);
+    border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:11.5px;
+    color:var(--dim);z-index:5;line-height:1.6;pointer-events:none;min-width:190px;}
+  #legend b{color:var(--text);}
+  #legend .up{color:var(--green);} #legend .down{color:var(--red);}
+  #legend .row{display:flex;justify-content:space-between;gap:14px;}
+  #legend .res{color:var(--accent);font-weight:700;}
+
+  #tradeinfo{position:absolute;top:10px;right:10px;background:rgba(17,21,29,.95);
+    border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:11.5px;
+    color:var(--dim);z-index:5;max-width:260px;display:none;line-height:1.7;}
+  #tradeinfo b{color:var(--text);}
+  #tradeinfo .tag{display:inline-block;padding:1px 7px;border-radius:3px;font-size:10px;
+    font-weight:700;letter-spacing:.03em;}
+  #tradeinfo .tag.TP{background:rgba(38,166,154,.2);color:var(--green);}
+  #tradeinfo .tag.SL{background:rgba(239,83,80,.2);color:var(--red);}
+  #tradeinfo .tag.C2C{background:rgba(240,160,32,.2);color:var(--orange);}
+  #tradeinfo .tag.OPEN{background:rgba(138,147,163,.2);color:var(--gray);}
+  #tradeinfo .close{position:absolute;top:6px;right:8px;cursor:pointer;color:var(--dim);
+    pointer-events:auto;font-size:13px;}
+  #tradeinfo .close:hover{color:var(--red);}
+
+  #legend-key{position:absolute;bottom:26px;left:10px;background:rgba(17,21,29,.88);
+    border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:10.5px;
+    color:var(--dim);z-index:5;display:flex;gap:14px;pointer-events:none;flex-wrap:wrap;max-width:70%;}
+  #legend-key .k{display:flex;align-items:center;gap:5px;}
+  #legend-key .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+  #legend-key .box{width:12px;height:9px;display:inline-block;border-radius:1px;}
+
+  #history{width:0;overflow:hidden;background:var(--panel);border-left:1px solid var(--border);
+    transition:width .18s ease;flex-shrink:0;}
+  #history.open{width:400px;}
+  #history-inner{width:400px;height:100%;display:flex;flex-direction:column;}
+  #history-head{padding:10px 14px;border-bottom:1px solid var(--border);font-size:11px;
+    color:var(--dim);display:flex;justify-content:space-between;align-items:center;}
+  #history-head b{color:var(--text);}
+  #history-progress{height:3px;background:var(--panel2);display:none;}
+  #history-progress-bar{height:100%;width:0%;background:var(--accent);transition:width .08s linear;}
+  #history-search{padding:8px 14px;border-bottom:1px solid var(--border);}
+  #history-search input{width:100%;background:var(--panel2);border:1px solid var(--border);
+    color:var(--text);font-size:11px;padding:6px 8px;border-radius:4px;font-family:inherit;}
+  #history-list{flex:1;overflow-y:auto;}
+  .h-row{padding:8px 14px;border-bottom:1px solid #1a1f2b;cursor:pointer;font-size:11px;}
+  .h-row:hover{background:var(--panel2);}
+  .h-row.sel{background:rgba(59,130,246,.15);border-left:2px solid var(--accent);}
+  .h-row .top{display:flex;justify-content:space-between;color:var(--dim);margin-bottom:3px;}
+  .h-row .top b{color:var(--text);}
+  .h-row .bottom{display:flex;justify-content:space-between;color:var(--dim);}
+  .h-dir{font-weight:700;}
+  .h-dir.BUY{color:var(--green);} .h-dir.SELL{color:var(--red);}
+  .h-tag{padding:0 6px;border-radius:3px;font-weight:700;font-size:10px;}
+  .h-tag.TP{background:rgba(38,166,154,.2);color:var(--green);}
+  .h-tag.SL{background:rgba(239,83,80,.2);color:var(--red);}
+  .h-tag.C2C{background:rgba(240,160,32,.2);color:var(--orange);}
+  .h-tag.OPEN{background:rgba(138,147,163,.2);color:var(--gray);}
+  .h-pnl.pos{color:var(--green);} .h-pnl.neg{color:var(--red);}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>BTC<span>/</span>USD &nbsp;Backtest <span>Viewer</span></h1>
+    <div class="stat">Trades <b id="s-total">–</b></div>
+    <div class="stat win">TP <b id="s-tp">–</b></div>
+    <div class="stat loss">SL <b id="s-sl">–</b></div>
+    <div class="stat">C2C <b id="s-c2c">–</b></div>
+    <div class="stat">Open <b id="s-open">–</b></div>
+    <div class="stat">Win% <b id="s-win">–</b></div>
+    <div class="stat">Net PnL <b id="s-net">–</b></div>
+    <button id="btn-clear" title="Deselect current trade">Clear selection</button>
+    <button id="btn-hist">Trade history</button>
+  </header>
+
+  <div id="loadwrap">
+    <div id="load-label"><span id="load-text">Starting…</span><b id="load-pct">0%</b></div>
+    <div id="load-track"><div id="load-bar"></div></div>
+  </div>
+
+  <div id="status" class="hidden"></div>
+
+  <div id="picker">
+    <label>Candles CSV (time,open,high,low,close)
+      <input type="file" id="f-candles" accept=".csv">
+    </label>
+    <label>Trades CSV (entry_time,exit_time,direction,entry,sl,tp,exit_price,pnl,result,…)
+      <input type="file" id="f-trades" accept=".csv">
+    </label>
+    <button id="btn-load">Load files</button>
+  </div>
+
+  <div id="body">
+    <div id="main">
+      <div id="chart"></div>
+      <canvas id="overlay"></canvas>
+      <div id="legend"></div>
+      <div id="tradeinfo"></div>
+      <div id="legend-key">
+        <span class="k"><span class="box" style="background:rgba(59,130,246,.35)"></span> Click a trade (chart or list) to draw its risk/reward zone</span>
+        <span class="k"><span class="dot" style="background:#26a69a"></span> TP</span>
+        <span class="k"><span class="dot" style="background:#ef5350"></span> SL</span>
+        <span class="k"><span class="dot" style="background:#f0a020"></span> C2C</span>
+        <span class="k"><span class="dot" style="background:#8a93a3"></span> Open</span>
+      </div>
+    </div>
+    <div id="history">
+      <div id="history-inner">
+        <div id="history-head"><span>Trade history — <b id="hh-count">0</b></span><span>click a row to jump</span></div>
+        <div id="history-progress"><div id="history-progress-bar"></div></div>
+        <div id="history-search"><input type="text" id="h-search-input" placeholder="Filter: BUY, SELL, TP, SL, C2C, OPEN, or a date (2025-03-14)"></div>
+        <div id="history-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   CONFIG — mirrors part3.py exactly. If you change the python config,
+   update these four numbers to match (they only affect the reconstructed
+   "pending setup" dotted line shown before a trade's entry — the trade
+   data itself, sl/tp/entry/exit/pnl, always comes straight from the CSV).
+   ══════════════════════════════════════════════════════════════════════ */
+const CFG = { BUFFER:1, SETUP_MIN:3, SETUP_MAX:5, LOOKBACK:3 };
+
+const COLORS = { TP:'#26a69a', SL:'#ef5350', C2C:'#f0a020', OPEN:'#8a93a3' };
+const CANDLE_FILE = 'COINBASE_BTCUSD__NORMAL_CANDLE.csv';
+const TRADES_FILE = 'backtest_trades.csv';
+const DEFAULT_VISIBLE_BARS = 400;
+
+let chart, candleSeries, overlayCanvas, overlayCtx;
+let baseCandles = [];        // ALL raw 5m candles {time,open,high,low,close} — no downsampling
+let trades = [];              // parsed + annotated with setupStart, sorted by entryTime
+let filteredRows = [];        // indices into `trades` currently shown in the history list (search filter)
+let selectedIndex = -1;       // index into `trades` of the ONE selected trade, or -1
+let activePriceLines = [];    // native chart price-lines for the selected trade (entry/sl/tp)
+
+const statusEl = document.getElementById('status');
+const pickerEl = document.getElementById('picker');
+const historyEl = document.getElementById('history');
+const historyList = document.getElementById('history-list');
+const historyProgress = document.getElementById('history-progress');
+const historyProgressBar = document.getElementById('history-progress-bar');
+const loadwrapEl = document.getElementById('loadwrap');
+const loadTextEl = document.getElementById('load-text');
+const loadPctEl = document.getElementById('load-pct');
+const loadBarEl = document.getElementById('load-bar');
+const tradeinfoEl = document.getElementById('tradeinfo');
+
+function setLoad(frac, text){
+  const pct = Math.max(0, Math.min(100, frac*100));
+  loadBarEl.style.width = pct.toFixed(1)+'%';
+  loadPctEl.textContent = pct.toFixed(0)+'%';
+  if(text) loadTextEl.textContent = text;
+}
+function hideLoad(){ loadwrapEl.classList.add('hidden'); }
+
+function toSeconds(str){
+  const t = Date.parse(String(str).trim().replace(' ', 'T'));
+  return Math.floor(t/1000);
+}
+
+// ── streaming fetch with byte-level progress (falls back gracefully
+//    when Content-Length or streaming isn't available, e.g. file://) ──
+async function fetchWithProgress(url, onProgress){
+  const resp = await fetch(url);
+  if(!resp.ok) throw new Error(url+' — HTTP '+resp.status);
+  const totalHeader = resp.headers.get('Content-Length');
+  const total = totalHeader ? parseInt(totalHeader, 10) : 0;
+  if(!resp.body || !total){
+    const text = await resp.text();
+    onProgress(1);
+    return text;
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let received = 0, text = '';
+  while(true){
+    const { done, value } = await reader.read();
+    if(done) break;
+    received += value.length;
+    text += decoder.decode(value, { stream:true });
+    onProgress(Math.min(1, received/total));
+  }
+  text += decoder.decode();
+  return text;
+}
+
+function parseCandlesCSV(text){
+  const res = Papa.parse(text, { header:true, skipEmptyLines:true, dynamicTyping:false });
+  const rows = res.data;
+  const out = [];
+  for(const r of rows){
+    const timeKey = r.time !== undefined ? 'time' : Object.keys(r)[0];
+    const rawTime = r[timeKey] ?? r.time;
+    if(!rawTime) continue;
+    const t = toSeconds(rawTime);
+    if(!Number.isFinite(t)) continue;
+    out.push({ time:t, open:+r.open, high:+r.high, low:+r.low, close:+r.close });
+  }
+  // de-dupe by timestamp (keep last) and sort — robust against unsorted
+  // or duplicated rows in the source file, unlike a single forward pass.
+  const byTime = new Map();
+  for(const c of out) byTime.set(c.time, c);
+  return Array.from(byTime.values()).sort((a,b)=>a.time-b.time);
+}
+
+function parseTradesCSV(text){
+  const res = Papa.parse(text, { header:true, skipEmptyLines:true });
+  return res.data
+    .filter(r=>r.entry_time && r.exit_time)
+    .map(r=>({
+      entryTime: toSeconds(r.entry_time),
+      exitTime:  toSeconds(r.exit_time),
+      dir: r.direction,
+      entry: +r.entry,
+      sl: +r.sl,
+      tp: +r.tp,
+      exitPrice: +r.exit_price,
+      pnl: +r.pnl,
+      result: r.result,
+      setupStart: null
+    }))
+    .filter(t=>Number.isFinite(t.entryTime) && Number.isFinite(t.exitTime))
+    .sort((a,b)=>a.entryTime-b.entryTime);
+}
+
+// ── reconstruct the pending-trigger ("setup") window for each trade ──
+// Single O(candles) pass, run once right after parsing. This is cosmetic
+// only (the dotted "setup → entry" line); it never affects entry/sl/tp/
+// exit/pnl, which are taken verbatim from the trades CSV.
+function annotateSetups(candles, tradeList){
+  const byKey = new Map();
+  for(const t of tradeList) byKey.set(t.entryTime+'_'+t.dir, t);
+
+  let pendingDir='', pendingTrigger=0, hasPending=false, pendingStart=0;
+  let streakDir='', streakHighs=[], streakLows=[], streakTimes=[];
+  let ti = 0;
+
+  for(const c of candles){
+    const t = c.time;
+    while(ti < tradeList.length && t > tradeList[ti].exitTime) ti++;
+    const cur = tradeList[ti];
+    const inTrade = cur && t >= cur.entryTime && t <= cur.exitTime;
+    if(inTrade){ hasPending = false; continue; }
+
+    if(hasPending){
+      if(pendingDir==='BUY' && c.high>=pendingTrigger){
+        const tr = byKey.get(t+'_BUY');
+        if(tr) tr.setupStart = pendingStart;
+        hasPending = false;
+        continue;
+      } else if(pendingDir==='SELL' && c.low<=pendingTrigger){
+        const tr = byKey.get(t+'_SELL');
+        if(tr) tr.setupStart = pendingStart;
+        hasPending = false;
+        continue;
+      }
+    }
+
+    const isRed = c.close < c.open, isGreen = c.close > c.open;
+    if(isRed){
+      if(streakDir==='RED'){ streakHighs.push(c.high); streakLows.push(c.low); streakTimes.push(t); }
+      else { streakDir='RED'; streakHighs=[c.high]; streakLows=[c.low]; streakTimes=[t]; }
+    } else if(isGreen){
+      if(streakDir==='GREEN'){ streakHighs.push(c.high); streakLows.push(c.low); streakTimes.push(t); }
+      else { streakDir='GREEN'; streakHighs=[c.high]; streakLows=[c.low]; streakTimes=[t]; }
+    } else {
+      streakDir=''; streakHighs=[]; streakLows=[]; streakTimes=[]; hasPending=false;
+      continue;
+    }
+
+    const cnt = streakHighs.length;
+    if(cnt >= CFG.SETUP_MIN){
+      let hh, ll, startTime;
+      if(cnt > CFG.SETUP_MAX){
+        hh = streakHighs.slice(-CFG.LOOKBACK);
+        ll = streakLows.slice(-CFG.LOOKBACK);
+        startTime = streakTimes[streakTimes.length-CFG.LOOKBACK];
+      } else {
+        hh = streakHighs; ll = streakLows; startTime = streakTimes[0];
+      }
+      if(streakDir==='RED'){
+        pendingDir='BUY'; pendingTrigger=Math.max(...hh)+CFG.BUFFER;
+      } else {
+        pendingDir='SELL'; pendingTrigger=Math.min(...ll)-CFG.BUFFER;
+      }
+      hasPending = true;
+      pendingStart = startTime;
+    }
+  }
+}
+
+function computeStats(){
+  const tot = trades.length;
+  const tp = trades.filter(t=>t.result==='TP').length;
+  const sl = trades.filter(t=>t.result==='SL').length;
+  const c2c = trades.filter(t=>t.result==='C2C').length;
+  const open = trades.filter(t=>t.result==='OPEN').length;
+  const net = trades.reduce((a,t)=>a+t.pnl,0);
+  const win = tot ? (tp/tot*100) : 0;
+  document.getElementById('s-total').textContent = tot;
+  document.getElementById('s-tp').textContent = tp;
+  document.getElementById('s-sl').textContent = sl;
+  document.getElementById('s-c2c').textContent = c2c;
+  document.getElementById('s-open').textContent = open;
+  document.getElementById('s-win').textContent = win.toFixed(1)+'%';
+  const netEl = document.getElementById('s-net');
+  netEl.textContent = (net>=0?'+':'')+net.toFixed(1);
+  netEl.style.color = net>=0 ? '#26a69a' : '#ef5350';
+}
+
+function initChart(){
+  const mainEl = document.getElementById('chart');
+  chart = LightweightCharts.createChart(mainEl, {
+    layout:{ background:{color:'#0b0e14'}, textColor:'#7a8494', fontFamily:"'SF Mono',Consolas,monospace" },
+    grid:{ vertLines:{color:'#1a1f2b'}, horzLines:{color:'#1a1f2b'} },
+    crosshair:{
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine:{ color:'#3b82f6', width:1, style:0, labelBackgroundColor:'#3b82f6' },
+      horzLine:{ color:'#3b82f6', width:1, style:0, labelBackgroundColor:'#3b82f6' }
+    },
+    rightPriceScale:{ borderColor:'#232a38' },
+    timeScale:{ borderColor:'#232a38', timeVisible:true, secondsVisible:false, rightOffset:6 },
+    handleScroll:{ mouseWheel:true, pressedMouseMove:true, horzTouchDrag:true, vertTouchDrag:true },
+    handleScale:{ mouseWheel:true, pinch:true, axisPressedMouseMove:true, axisDoubleClickReset:true },
+  });
+
+  candleSeries = chart.addCandlestickSeries({
+    upColor:'#26a69a', downColor:'#ef5350',
+    borderUpColor:'#26a69a', borderDownColor:'#ef5350',
+    wickUpColor:'#26a69a', wickDownColor:'#ef5350',
+  });
+
+  overlayCanvas = document.getElementById('overlay');
+  overlayCtx = overlayCanvas.getContext('2d');
+
+  const ro = new ResizeObserver(()=>{ resizeAll(); });
+  ro.observe(document.getElementById('main'));
+
+  chart.subscribeCrosshairMove(onCrosshair);
+  chart.subscribeClick((param)=>{
+    if(!param || !param.time){ selectTradeByIndex(-1); return; }
+    selectTradeByIndex(findTradeIndexNear(param.time));
+  });
+
+  resizeAll();
+
+  // ── one persistent render loop for the overlay canvas, started ONCE
+  //    and never stopped for the lifetime of the page. This is the fix
+  //    for "clicking a trade sometimes doesn't draw the zone": the old
+  //    code tried to draw the zone a limited number of times (a burst of
+  //    retries) after each click/pan/zoom, and simply gave up silently if
+  //    the chart hadn't finished animating/laying out within that burst.
+  //    Redrawing every animation frame instead means the zone is
+  //    guaranteed to appear the instant coordinates become resolvable,
+  //    however long that takes, and it can never "get stuck" un-drawn.
+  //    The canvas is a transparent layer on top of the chart, so this
+  //    never hides or interferes with the candles underneath — both are
+  //    always visible together.
+  requestAnimationFrame(renderLoop);
+}
+
+function renderLoop(){
+  drawOverlay();
+  requestAnimationFrame(renderLoop);
+}
+
+function resizeAll(){
+  const mainEl = document.getElementById('main');
+  const w = mainEl.clientWidth, h = mainEl.clientHeight;
+  chart.resize(w, h);
+  const dpr = window.devicePixelRatio || 1;
+  overlayCanvas.width = w*dpr;
+  overlayCanvas.height = h*dpr;
+  overlayCanvas.style.width = w+'px';
+  overlayCanvas.style.height = h+'px';
+  overlayCtx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SELECTION — a single source of truth (selectedIndex) drives:
+//    1. native chart price-lines for entry / SL / TP (always correct,
+//       drawn by the chart library itself — never depend on our own
+//       coordinate math, so they can never silently fail to appear)
+//    2. the shaded risk/reward rectangle + arrows on the canvas overlay
+//       (cosmetic; redrawn every frame by renderLoop, see above)
+//    3. the highlighted row in the trade-history list
+//    4. the trade-info card, top right
+// ══════════════════════════════════════════════════════════════
+
+function clearPriceLines(){
+  for(const line of activePriceLines){
+    try{ candleSeries.removePriceLine(line); }catch(e){}
+  }
+  activePriceLines = [];
+}
+
+function addPriceLinesForTrade(t){
+  const line = (price, color, title, dashed)=>candleSeries.createPriceLine({
+    price, color, lineWidth: dashed ? 2 : 2,
+    lineStyle: dashed ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+    axisLabelVisible: true, title,
+  });
+  activePriceLines.push(line(t.entry, '#5b9dff', 'ENTRY '+t.entry.toFixed(1), false));
+  activePriceLines.push(line(t.tp,    COLORS.TP,  'TP '+t.tp.toFixed(1),      true));
+  activePriceLines.push(line(t.sl,    COLORS.SL,  'SL '+t.sl.toFixed(1),      true));
+}
+
+function selectTradeByIndex(idx){
+  selectedIndex = (idx!==null && idx>=0 && idx<trades.length) ? idx : -1;
+  clearPriceLines();
+  document.querySelectorAll('.h-row.sel').forEach(r=>r.classList.remove('sel'));
+
+  if(selectedIndex === -1){
+    tradeinfoEl.style.display = 'none';
+    return;
+  }
+
+  const t = trades[selectedIndex];
+  ensureTradeVisible(t);
+  addPriceLinesForTrade(t);
+
+  const row = historyList.querySelector('[data-idx="'+selectedIndex+'"]');
+  if(row){
+    row.classList.add('sel');
+    if(historyEl.classList.contains('open')) row.scrollIntoView({block:'nearest'});
+  }
+  showTradeInfo(t);
+}
+
+function ensureTradeVisible(t){
+  const ts = chart.timeScale();
+  const range = ts.getVisibleRange();
+  const winStart = t.setupStart!==null ? t.setupStart : t.entryTime;
+  const span = Math.max(t.exitTime - winStart, 300);
+  const pad = Math.max(span * 0.6, 1800);
+  const alreadyVisible = range && winStart >= range.from && t.exitTime <= range.to;
+  if(!alreadyVisible){
+    ts.setVisibleRange({ from: winStart - pad, to: t.exitTime + pad });
+  }
+}
+
+function drawTriangle(ctx,x,y,size,up,color){
+  ctx.beginPath();
+  if(up){
+    ctx.moveTo(x, y-size); ctx.lineTo(x-size, y+size*0.7); ctx.lineTo(x+size, y+size*0.7);
+  } else {
+    ctx.moveTo(x, y+size); ctx.lineTo(x-size, y-size*0.7); ctx.lineTo(x+size, y-size*0.7);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawArrow(ctx,x1,y1,x2,y2,color){
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([7,4]);
+  ctx.beginPath();
+  ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  const angle = Math.atan2(y2-y1, x2-x1);
+  const headLen = 8;
+  ctx.beginPath();
+  ctx.moveTo(x2,y2);
+  ctx.lineTo(x2-headLen*Math.cos(angle-Math.PI/6), y2-headLen*Math.sin(angle-Math.PI/6));
+  ctx.lineTo(x2-headLen*Math.cos(angle+Math.PI/6), y2-headLen*Math.sin(angle+Math.PI/6));
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawZoneLabel(ctx, w, x, y, price, entry){
+  if(y===null) return;
+  const pts = price - entry;
+  const pct = (pts/entry*100);
+  const text = `${pts>=0?'+':''}${pts.toFixed(0)} pts (${pct>=0?'+':''}${pct.toFixed(2)}%)`;
+  ctx.font = '10px "SF Mono",Consolas,monospace';
+  const tw = ctx.measureText(text).width;
+  let lx = x + 6;
+  if(lx + tw + 6 > w) lx = w - tw - 6;
+  if(lx < 2) lx = 2;
+  ctx.fillStyle = 'rgba(11,14,20,0.72)';
+  ctx.fillRect(lx-3, y-9, tw+6, 13);
+  ctx.fillStyle = pts >= 0 ? '#26a69a' : '#ef5350';
+  ctx.fillText(text, lx, y+2);
+}
+
+function drawOverlay(){
+  if(!overlayCtx) return;
+  const w = overlayCanvas.clientWidth, h = overlayCanvas.clientHeight;
+  overlayCtx.clearRect(0,0,w,h);
+
+  if(selectedIndex === -1) return;
+  const t = trades[selectedIndex];
+  if(!t) return;
+
+  const ts = chart.timeScale();
+  const xEntry = ts.timeToCoordinate(t.entryTime);
+  const xExit  = ts.timeToCoordinate(t.exitTime);
+  const yEntry = candleSeries.priceToCoordinate(t.entry);
+  // Not ready yet (mid-pan/zoom, or trade off-screen) — just skip this
+  // frame, the very next frame (16ms later) will try again automatically.
+  if(xEntry===null || xExit===null || yEntry===null) return;
+
+  const ySl = candleSeries.priceToCoordinate(t.sl);
+  const yTp = candleSeries.priceToCoordinate(t.tp);
+  const yExit = candleSeries.priceToCoordinate(t.exitPrice);
+
+  const left  = Math.min(xEntry, xExit);
+  const right = Math.max(xEntry, xExit);
+  const boxW  = Math.max(right - left, 2);
+
+  // pending trigger line (setup -> entry), best-effort, non-blocking
+  if(t.setupStart!==null){
+    const xStart = ts.timeToCoordinate(t.setupStart);
+    if(xStart!==null){
+      overlayCtx.beginPath();
+      overlayCtx.strokeStyle = '#607089';
+      overlayCtx.lineWidth = 1;
+      overlayCtx.setLineDash([2,2]);
+      overlayCtx.moveTo(xStart, yEntry);
+      overlayCtx.lineTo(xEntry, yEntry);
+      overlayCtx.stroke();
+      overlayCtx.setLineDash([]);
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(xStart, yEntry-4);
+      overlayCtx.lineTo(xStart, yEntry+4);
+      overlayCtx.stroke();
+    }
+  }
+
+  // reward zone (entry -> TP)
+  if(yTp!==null){
+    const top = Math.min(yEntry,yTp), bot = Math.max(yEntry,yTp);
+    overlayCtx.fillStyle = 'rgba(38,166,154,0.30)';
+    overlayCtx.fillRect(left, top, boxW, bot-top);
+    overlayCtx.strokeStyle = 'rgba(38,166,154,0.95)';
+    overlayCtx.lineWidth = 1.4;
+    overlayCtx.strokeRect(left+0.5, top+0.5, boxW-1, Math.max(bot-top-1,0));
+  }
+  // risk zone (entry -> SL)
+  if(ySl!==null){
+    const top = Math.min(yEntry,ySl), bot = Math.max(yEntry,ySl);
+    overlayCtx.fillStyle = 'rgba(239,83,80,0.30)';
+    overlayCtx.fillRect(left, top, boxW, bot-top);
+    overlayCtx.strokeStyle = 'rgba(239,83,80,0.95)';
+    overlayCtx.lineWidth = 1.4;
+    overlayCtx.strokeRect(left+0.5, top+0.5, boxW-1, Math.max(bot-top-1,0));
+  }
+
+  if(boxW > 22){
+    drawZoneLabel(overlayCtx, w, right, yTp, t.tp, t.entry);
+    drawZoneLabel(overlayCtx, w, right, ySl, t.sl, t.entry);
+  }
+
+  // entry line
+  overlayCtx.beginPath();
+  overlayCtx.strokeStyle = '#5b9dff';
+  overlayCtx.lineWidth = 2.2;
+  overlayCtx.setLineDash([]);
+  overlayCtx.moveTo(xEntry, yEntry); overlayCtx.lineTo(xExit, yEntry);
+  overlayCtx.stroke();
+
+  if(ySl!==null){
+    overlayCtx.beginPath();
+    overlayCtx.strokeStyle = COLORS.SL;
+    overlayCtx.lineWidth = 1.6;
+    overlayCtx.setLineDash([4,3]);
+    overlayCtx.moveTo(xEntry, ySl); overlayCtx.lineTo(xExit, ySl);
+    overlayCtx.stroke();
+  }
+  if(yTp!==null){
+    overlayCtx.beginPath();
+    overlayCtx.strokeStyle = COLORS.TP;
+    overlayCtx.lineWidth = 1.6;
+    overlayCtx.setLineDash([4,3]);
+    overlayCtx.moveTo(xEntry, yTp); overlayCtx.lineTo(xExit, yTp);
+    overlayCtx.stroke();
+  }
+  overlayCtx.setLineDash([]);
+
+  // direction arrow at entry
+  drawTriangle(overlayCtx, xEntry, yEntry, 6, t.dir==='BUY', '#5b9dff');
+
+  // exit marker + outcome arrow
+  if(yExit!==null){
+    overlayCtx.beginPath();
+    overlayCtx.arc(xExit, yExit, 5, 0, Math.PI*2);
+    overlayCtx.fillStyle = COLORS[t.result] || '#8a93a3';
+    overlayCtx.fill();
+    overlayCtx.lineWidth = 1;
+    overlayCtx.strokeStyle = '#0b0e14';
+    overlayCtx.stroke();
+    drawArrow(overlayCtx, xEntry, yEntry, xExit, yExit, COLORS[t.result] || '#8a93a3');
+  }
+}
+
+function onCrosshair(param){
+  const legend = document.getElementById('legend');
+  if(!param || !param.time || !param.seriesData || !param.seriesData.size){
+    legend.style.display='none';
+    return;
+  }
+  legend.style.display='block';
+  const d = param.seriesData.get(candleSeries);
+  if(d){
+    const dir = d.close>=d.open ? 'up' : 'down';
+    const date = new Date(param.time*1000).toISOString().replace('T',' ').slice(0,16)+'Z';
+    legend.innerHTML =
+      `<div class="row"><span>${date}</span><span class="res">5m</span></div>`+
+      `<div class="row"><span>O</span><b class="${dir}">${d.open.toFixed(1)}</b></div>`+
+      `<div class="row"><span>H</span><b class="${dir}">${d.high.toFixed(1)}</b></div>`+
+      `<div class="row"><span>L</span><b class="${dir}">${d.low.toFixed(1)}</b></div>`+
+      `<div class="row"><span>C</span><b class="${dir}">${d.close.toFixed(1)}</b></div>`;
+  }
+}
+
+// Nearest trade to a clicked timestamp. Generous tolerance so a click
+// anywhere near a trade's setup/entry/exit region selects it; falls back
+// to "nearest trade overall within 2 hours" so near-misses still work.
+function findTradeIndexNear(time){
+  let best = -1, bestDist = Infinity;
+  for(let i=0;i<trades.length;i++){
+    const t = trades[i];
+    const winStart = t.setupStart!==null ? t.setupStart : t.entryTime;
+    const inWindow = time >= winStart - 1800 && time <= t.exitTime + 1800;
+    const dist = Math.min(Math.abs(time-t.entryTime), Math.abs(time-t.exitTime));
+    if(inWindow && dist < bestDist){ bestDist = dist; best = i; }
+  }
+  if(best === -1){
+    // fall back to nearest trade within 2 hours even if outside its window
+    for(let i=0;i<trades.length;i++){
+      const t = trades[i];
+      const dist = Math.min(Math.abs(time-t.entryTime), Math.abs(time-t.exitTime));
+      if(dist <= 7200 && dist < bestDist){ bestDist = dist; best = i; }
+    }
+  }
+  return best;
+}
+
+function showTradeInfo(t){
+  const fmt = s => new Date(s*1000).toISOString().replace('T',' ').slice(0,16)+'Z';
+  tradeinfoEl.style.display='block';
+  tradeinfoEl.innerHTML =
+    `<span class="close" title="Deselect">✕</span>`+
+    `<div><b>${t.dir}</b> &nbsp; <span class="tag ${t.result}">${t.result}</span></div>`+
+    (t.setupStart!==null ? `<div>Setup &nbsp;${fmt(t.setupStart)}</div>` : '')+
+    `<div>Entry &nbsp;<b>${t.entry.toFixed(1)}</b> @ ${fmt(t.entryTime)}</div>`+
+    `<div>SL &nbsp;&nbsp;&nbsp;<b>${t.sl.toFixed(1)}</b></div>`+
+    `<div>TP &nbsp;&nbsp;&nbsp;<b>${t.tp.toFixed(1)}</b></div>`+
+    `<div>Exit &nbsp;&nbsp;<b>${t.exitPrice.toFixed(1)}</b> @ ${fmt(t.exitTime)}</div>`+
+    `<div>PnL &nbsp;&nbsp;<b style="color:${t.pnl>=0?'#26a69a':'#ef5350'}">${t.pnl>=0?'+':''}${t.pnl.toFixed(1)}</b></div>`;
+  tradeinfoEl.querySelector('.close').addEventListener('click', ()=>selectTradeByIndex(-1));
+}
+
+// ── trade history panel — built in chunks with its own progress bar,
+//    optionally filtered by the search box ──
+const HISTORY_CHUNK = 300;
+let historyBuildToken = 0;
+
+function currentFilter(){
+  return (document.getElementById('h-search-input').value || '').trim().toUpperCase();
+}
+
+function matchesFilter(t, q){
+  if(!q) return true;
+  if(t.dir.toUpperCase().includes(q)) return true;
+  if(t.result.toUpperCase().includes(q)) return true;
+  const dateStr = new Date(t.entryTime*1000).toISOString();
+  return dateStr.toUpperCase().includes(q);
+}
+
+function buildHistoryChunked(){
+  const myToken = ++historyBuildToken;
+  historyList.innerHTML = '';
+  document.getElementById('hh-count').textContent = '0';
+
+  const q = currentFilter();
+  filteredRows = [];
+  for(let i=0;i<trades.length;i++){ if(matchesFilter(trades[i], q)) filteredRows.push(i); }
+
+  if(!filteredRows.length){ historyProgress.style.display='none'; return; }
+
+  historyProgress.style.display = 'block';
+  historyProgressBar.style.width = '0%';
+
+  let pos = 0;
+  const total = filteredRows.length;
+  const fmt = s => new Date(s*1000).toISOString().replace('T',' ').slice(0,16)+'Z';
+
+  function step(){
+    if(myToken !== historyBuildToken) return;
+    const end = Math.min(pos + HISTORY_CHUNK, total);
+    const frag = document.createDocumentFragment();
+    for(; pos<end; pos++){
+      const idx = filteredRows[pos];
+      const t = trades[idx];
+      const row = document.createElement('div');
+      row.className = 'h-row';
+      row.dataset.idx = idx;
+      row.innerHTML =
+        `<div class="top"><span class="h-dir ${t.dir}">${t.dir}</span><b>${fmt(t.entryTime)}</b></div>`+
+        `<div class="bottom"><span>${t.entry.toFixed(1)} → ${t.exitPrice.toFixed(1)}</span>`+
+        `<span class="h-tag ${t.result}">${t.result}</span>`+
+        `<span class="h-pnl ${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}${t.pnl.toFixed(1)}</span></div>`;
+      if(idx === selectedIndex) row.classList.add('sel');
+      frag.appendChild(row);
+    }
+    historyList.appendChild(frag);
+    document.getElementById('hh-count').textContent = pos.toLocaleString()+(q?(' / '+trades.length.toLocaleString()):'');
+    historyProgressBar.style.width = (pos/total*100).toFixed(1)+'%';
+    if(pos < total){
+      requestAnimationFrame(step);
+    } else {
+      historyProgress.style.display = 'none';
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+historyList.addEventListener('click', (e)=>{
+  const row = e.target.closest('.h-row');
+  if(!row) return;
+  const idx = +row.dataset.idx;
+  jumpToTrade(idx);
+});
+
+document.getElementById('h-search-input').addEventListener('input', ()=>buildHistoryChunked());
+
+function jumpToTrade(idx){
+  const t = trades[idx];
+  const start = t.setupStart!==null ? t.setupStart : t.entryTime;
+  const span = t.exitTime - start;
+  const padSec = Math.max(span*0.6, 1800);
+  chart.timeScale().setVisibleRange({ from: start - padSec, to: t.exitTime + padSec });
+  selectTradeByIndex(idx);
+}
+
+document.getElementById('btn-hist').addEventListener('click', (e)=>{
+  historyEl.classList.toggle('open');
+  e.target.classList.toggle('active');
+  setTimeout(resizeAll, 200);
+});
+
+document.getElementById('btn-clear').addEventListener('click', ()=>selectTradeByIndex(-1));
+
+function renderAll(){
+  selectTradeByIndex(-1);
+  annotateSetups(baseCandles, trades);
+  candleSeries.setData(baseCandles);
+  computeStats();
+
+  if(baseCandles.length){
+    const n = baseCandles.length;
+    const from = baseCandles[Math.max(0, n-DEFAULT_VISIBLE_BARS)].time;
+    const to   = baseCandles[n-1].time;
+    chart.timeScale().setVisibleRange({ from, to });
+  }
+
+  buildHistoryChunked();
+}
+
+async function boot(){
+  initChart();
+  try{
+    setLoad(0.00, 'Downloading '+CANDLE_FILE+'…');
+    const cText = await fetchWithProgress(CANDLE_FILE, p=>{
+      setLoad(p*0.85, 'Downloading candles… '+(p*100).toFixed(0)+'%');
+    });
+
+    setLoad(0.85, 'Downloading '+TRADES_FILE+'…');
+    const tText = await fetchWithProgress(TRADES_FILE, p=>{
+      setLoad(0.85 + p*0.08, 'Downloading trades… '+(p*100).toFixed(0)+'%');
+    });
+
+    setLoad(0.93, 'Parsing candles…');
+    baseCandles = parseCandlesCSV(cText);
+    setLoad(0.96, 'Parsing trades…');
+    trades = parseTradesCSV(tText);
+    setLoad(0.98, 'Rendering chart…');
+    renderAll();
+    setLoad(1.0, `Loaded ${baseCandles.length.toLocaleString()} candles and ${trades.length.toLocaleString()} trades.`);
+    setTimeout(hideLoad, 700);
+  }catch(err){
+    hideLoad();
+    statusEl.classList.remove('hidden');
+    statusEl.classList.add('err');
+    statusEl.textContent = `Could not auto-load "${CANDLE_FILE}" / "${TRADES_FILE}" from this folder (${err.message}). This happens when the file is opened directly (file://) instead of through a local server, or the filenames differ. Pick the files manually below, or run: python -m http.server  in this folder and open http://localhost:8000/backtest_chart.html`;
+    pickerEl.style.display = 'flex';
+  }
+}
+
+document.getElementById('btn-load').addEventListener('click', ()=>{
+  const cf = document.getElementById('f-candles').files[0];
+  const tf = document.getElementById('f-trades').files[0];
+  if(!cf || !tf){ alert('Please choose both CSV files.'); return; }
+  loadwrapEl.classList.remove('hidden');
+  setLoad(0.05, 'Reading files…');
+  const r1 = new FileReader(), r2 = new FileReader();
+  let cText=null, tTextV=null;
+  const tryRender = ()=>{
+    if(cText!==null && tTextV!==null){
+      setLoad(0.5, 'Parsing candles…');
+      baseCandles = parseCandlesCSV(cText);
+      setLoad(0.75, 'Parsing trades…');
+      trades  = parseTradesCSV(tTextV);
+      setLoad(0.9, 'Rendering chart…');
+      statusEl.classList.add('hidden');
+      statusEl.classList.remove('err');
+      pickerEl.style.display='none';
+      renderAll();
+      setLoad(1.0, `Loaded ${baseCandles.length.toLocaleString()} candles and ${trades.length.toLocaleString()} trades (manual selection).`);
+      setTimeout(hideLoad, 700);
+    }
+  };
+  r1.onload = ()=>{ cText = r1.result; tryRender(); };
+  r2.onload = ()=>{ tTextV = r2.result; tryRender(); };
+  r1.readAsText(cf);
+  r2.readAsText(tf);
+});
+
+boot();
+</script>
+</body>
+</html>
